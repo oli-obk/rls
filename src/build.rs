@@ -355,25 +355,27 @@ impl BuildQueue {
                     if self.config.cfg_test {
                         args.push("--test".to_owned());
                     }
-                    args.push("--sysroot".to_owned());
-                    let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
-                    let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
-                    let sys_root = if let (Some(home), Some(toolchain)) = (home, toolchain) {
-                        format!("{}/toolchains/{}", home, toolchain)
-                    } else {
-                        option_env!("SYSROOT")
-                            .map(|s| s.to_owned())
-                            .or_else(|| Command::new("rustc")
-                                .arg("--print")
-                                .arg("sysroot")
-                                .output()
-                                .ok()
-                                .and_then(|out| String::from_utf8(out.stdout).ok())
-                                .map(|s| s.trim().to_owned()))
-                            .expect("need to specify SYSROOT env var, \
-                                     or use rustup or multirust")
-                    };
-                    args.push(sys_root.to_owned());
+                    if self.config.sysroot.is_empty() {
+                        args.push("--sysroot".to_owned());
+                        let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));
+                        let toolchain = option_env!("RUSTUP_TOOLCHAIN").or(option_env!("MULTIRUST_TOOLCHAIN"));
+                        let sys_root = if let (Some(home), Some(toolchain)) = (home, toolchain) {
+                            format!("{}/toolchains/{}", home, toolchain)
+                        } else {
+                            option_env!("SYSROOT")
+                                .map(|s| s.to_owned())
+                                .or_else(|| Command::new("rustc")
+                                    .arg("--print")
+                                    .arg("sysroot")
+                                    .output()
+                                    .ok()
+                                    .and_then(|out| String::from_utf8(out.stdout).ok())
+                                    .map(|s| s.trim().to_owned()))
+                                .expect("need to specify SYSROOT env var, \
+                                        or use rustup or multirust")
+                        };
+                        args.push(sys_root.to_owned());
+                    }
 
                     let envs = cmd.get_envs();
                     trace!("envs: {:?}", envs);
@@ -416,9 +418,14 @@ impl BuildQueue {
         // forever. Therefore, we spawn an extra thread here to be safe.
         let handle = thread::spawn(move || {
             env::set_var("CARGO_TARGET_DIR", &Path::new("target").join("rls"));
-            env::set_var("RUSTFLAGS",
-                         "-Zunstable-options -Zsave-analysis --error-format=json \
-                          -Zcontinue-parse-after-error");
+            let hardcoded = "-Zunstable-options -Zsave-analysis --error-format=json \
+                             -Zcontinue-parse-after-error";
+            if rls_config.sysroot.is_empty() {
+                env::set_var("RUSTFLAGS", hardcoded);
+            } else {
+                env::set_var("RUSTFLAGS", &format!("--sysroot {} {}", rls_config.sysroot, hardcoded));
+            }
+
             let shell = MultiShell::from_write(Box::new(BufWriter(out.clone())),
                                                Box::new(BufWriter(err.clone())));
             let config = CargoConfig::new(shell,
